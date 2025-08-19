@@ -1,33 +1,47 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-import '../../supabase_config.dart';
+import '../widgets/edu_nav_shell.dart';
+import 'profile_screen.dart';
 
 class AdminHome extends StatelessWidget {
   const AdminHome({super.key});
 
-  Future<void> _signOut(BuildContext context) async {
-    await SupabaseInit.client.auth.signOut();
-    if (!context.mounted) return;
-    Navigator.of(context).popUntil((r) => r.isFirst);
+  @override
+  Widget build(BuildContext context) {
+    return EduNavShell(
+      role: 'Coordinator',
+      pages: const [
+        _Stub(title: 'Home • Coordinator'),
+        _Stub(title: 'Emergency • Coordinator'),
+        _Stub(title: 'Notifications • Coordinator'),
+        ProfileScreen(), // ✅ real profile
+      ],
+      labels: const ['Home', 'Emergency', 'Notification', 'Profile'],
+      icons: const [
+        Icons.home_rounded,
+        Icons.health_and_safety_outlined,
+        Icons.notifications_none_rounded,
+        Icons.person_outline_rounded,
+      ],
+      onFab: () {
+        // Coordinator create action (e.g., global announcement)
+      },
+    );
   }
+}
+
+class _Stub extends StatelessWidget {
+  final String title;
+  const _Stub({required this.title});
 
   @override
   Widget build(BuildContext context) {
-    final user = Supabase.instance.client.auth.currentUser;
-    return Scaffold(
-      appBar: AppBar(title: const Text('Coordinator • ProjectEdu')),
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('Welcome, ${user?.email ?? 'admin'}'),
-            const SizedBox(height: 12),
-            ElevatedButton(
-              onPressed: () => _signOut(context),
-              child: const Text('Sign out'),
-            ),
-          ],
-        ),
+    return Center(
+      child: Text(
+        title,
+        style: Theme.of(context)
+            .textTheme
+            .titleLarge
+            ?.copyWith(fontWeight: FontWeight.w700),
       ),
     );
   }

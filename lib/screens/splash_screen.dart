@@ -97,7 +97,7 @@ class _SplashScreenState extends State<SplashScreen> {
 
                       // Your 3D logo
                       Image.asset(
-                        '/assets/images/logo.png',
+                        'assets/images/logo.png',
                         width: 140,
                         height: 140,
                       )

@@ -1,3 +1,4 @@
+// lib/supabase_config.dart
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class SupabaseKeys {
@@ -12,7 +13,22 @@ class SupabaseInit {
       url: SupabaseKeys.supabaseUrl,
       anonKey: SupabaseKeys.supabaseAnonKey,
       debug: true,
+      // ✅ FlutterAuthClientOptions (not AuthClientOptions)
+      // ✅ detectSessionInUri (not detectSessionInUrl)
+      // ✅ Disable persistence with EmptyLocalStorage
+      authOptions: const FlutterAuthClientOptions(
+        autoRefreshToken: false,
+        detectSessionInUri: false,
+        localStorage: EmptyLocalStorage(),
+      ),
     );
+
+    // Optional: clear any previously saved session from older builds.
+    try {
+      await Supabase.instance.client.auth.signOut();
+    } catch (_) {
+      // ignore
+    }
   }
 
   static SupabaseClient get client => Supabase.instance.client;

@@ -2,9 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../supabase_config.dart';
-import 'student_home.dart';
-import 'teacher_home.dart';
-import 'admin_home.dart';
+
+// store session locally (email + role) for Profile screen & auto-login UX
+import '../../utils/session_store.dart';
+
+// ✅ Use aliases so we always reference the right class names:
+import 'student_home.dart' as student;
+import 'teacher_home.dart' as teacher;
+import 'admin_home.dart' as admin;
 
 enum AppRole { student, teacher, admin }
 
@@ -73,7 +78,7 @@ class _LoginScreenState extends State<LoginScreen> {
       final email = _normalizeEmail(_emailOrRoll.text);
       final role = _roleString(_role);
 
-      // ✅ FIX: no type arg on select()
+      // Directory-only check (no password flow)
       final row = await client
           .from('directory_people')
           .select()
@@ -82,21 +87,32 @@ class _LoginScreenState extends State<LoginScreen> {
           .maybeSingle();
 
       if (row == null) {
-        _snack('No account found for this ${role == "student" ? "roll/email" : "email"} under $role.', true);
+        _snack(
+          'No account found for this ${role == "student" ? "roll/email" : "email"} under $role.',
+          true,
+        );
         return;
       }
 
-      // Success → route by selected role
+      // ✅ Save lightweight session for profile screen & auto-landing
+      await SessionStore.save(email: email, role: role);
+
       if (!mounted) return;
       switch (_role) {
         case AppRole.student:
-          Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const StudentHome()));
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const student.StudentHome()),
+          );
           break;
         case AppRole.teacher:
-          Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const TeacherHome()));
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const teacher.TeacherHome()),
+          );
           break;
         case AppRole.admin:
-          Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const AdminHome()));
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const admin.AdminHome()),
+          );
           break;
       }
     } catch (e) {
@@ -122,9 +138,7 @@ class _LoginScreenState extends State<LoginScreen> {
     const blueLight = Color(0xFF3B82F6);
     final textTheme = Theme.of(context).textTheme;
 
-    final inputLabel = _role == AppRole.student
-        ? 'Roll no. or KIIT Email'
-        : 'KIIT Email';
+    final inputLabel = _role == AppRole.student ? 'Roll no. or KIIT Email' : 'KIIT Email';
     final inputHint = _role == AppRole.student
         ? 'e.g., 2230265  or  2230265@kiit.ac.in'
         : 'e.g., john.doe@kiit.ac.in';
@@ -134,8 +148,8 @@ class _LoginScreenState extends State<LoginScreen> {
       body: Stack(
         children: [
           // soft radial wash
-          Positioned.fill(
-            child: const DecoratedBox(
+          const Positioned.fill(
+            child: DecoratedBox(
               decoration: BoxDecoration(
                 gradient: RadialGradient(
                   center: Alignment(0.0, -0.35),
@@ -148,10 +162,15 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
           // faint blob
           Positioned(
-            left: -90, top: -90,
+            left: -90,
+            top: -90,
             child: Container(
-              width: 240, height: 240,
-              decoration: BoxDecoration(shape: BoxShape.circle, color: blue.withOpacity(0.08)),
+              width: 240,
+              height: 240,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: blue.withOpacity(0.08),
+              ),
             ).animate().fadeIn(duration: 700.ms),
           ),
 
@@ -165,45 +184,94 @@ class _LoginScreenState extends State<LoginScreen> {
                   Column(
                     children: [
                       SizedBox(
-                        width: 200, height: 200,
-                        child: Stack(alignment: Alignment.center, children: [
-                          Container(
-                            width: 170, height: 170,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: blue.withOpacity(0.08),
-                              boxShadow: [BoxShadow(color: blue.withOpacity(0.35), blurRadius: 60, spreadRadius: 10)],
+                        width: 200,
+                        height: 200,
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            Container(
+                              width: 170,
+                              height: 170,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: blue.withOpacity(0.08),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: blue.withOpacity(0.35),
+                                    blurRadius: 60,
+                                    spreadRadius: 10,
+                                  ),
+                                ],
+                              ),
+                            )
+                                .animate()
+                                .scale(
+                              begin: const Offset(0.95, 0.95),
+                              end: const Offset(1.03, 1.03),
+                              duration: 900.ms,
+                              curve: Curves.easeInOut,
+                            )
+                                .then()
+                                .scale(
+                              begin: const Offset(1.03, 1.03),
+                              end: const Offset(1.00, 1.00),
+                              duration: 700.ms,
+                              curve: Curves.easeOut,
                             ),
-                          )
-                              .animate()
-                              .scale(begin: const Offset(0.95, 0.95), end: const Offset(1.03, 1.03), duration: 900.ms, curve: Curves.easeInOut)
-                              .then()
-                              .scale(begin: const Offset(1.03, 1.03), end: const Offset(1.00, 1.00), duration: 700.ms, curve: Curves.easeOut),
-                          Image.asset('assets/images/logo.png', width: 150, height: 150)
-                              .animate()
-                              .scale(begin: const Offset(0.82, 0.82), end: const Offset(1, 1), duration: 650.ms, curve: Curves.easeOutBack)
-                              .fadeIn(duration: 650.ms)
-                              .shimmer(colors: [Colors.white.withOpacity(0.0), Colors.white.withOpacity(0.35)], duration: 800.ms, delay: 1100.ms),
-                        ]),
+                            Image.asset(
+                              'assets/images/logo.png',
+                              width: 150,
+                              height: 150,
+                            )
+                                .animate()
+                                .scale(
+                              begin: const Offset(0.82, 0.82),
+                              end: const Offset(1, 1),
+                              duration: 650.ms,
+                              curve: Curves.easeOutBack,
+                            )
+                                .fadeIn(duration: 650.ms)
+                                .shimmer(
+                              colors: [
+                                Colors.white.withOpacity(0.0),
+                                Colors.white.withOpacity(0.35),
+                              ],
+                              duration: 800.ms,
+                              delay: 1100.ms,
+                            ),
+                          ],
+                        ),
                       ),
-                      Text('ProjectEdu',
-                          style: textTheme.headlineSmall?.copyWith(
-                            color: blue,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0.4,
-                          ))
+                      Text(
+                        'ProjectEdu',
+                        style: textTheme.headlineSmall?.copyWith(
+                          color: blue,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.4,
+                        ),
+                      )
                           .animate()
                           .fadeIn(duration: 500.ms, delay: 150.ms)
                           .slideY(begin: 0.15, end: 0, duration: 500.ms),
                       const SizedBox(height: 8),
                       Container(
-                        width: 150, height: 3,
+                        width: 150,
+                        height: 3,
                         decoration: BoxDecoration(
                           gradient: const LinearGradient(colors: [blue, blueLight]),
                           borderRadius: BorderRadius.circular(999),
-                          boxShadow: [BoxShadow(color: blueLight.withOpacity(0.35), blurRadius: 10, spreadRadius: 1)],
+                          boxShadow: [
+                            BoxShadow(
+                              color: blueLight.withOpacity(0.35),
+                              blurRadius: 10,
+                              spreadRadius: 1,
+                            ),
+                          ],
                         ),
-                      ).animate().fadeIn(duration: 450.ms, delay: 450.ms).scaleX(begin: 0.2, end: 1, duration: 450.ms),
+                      )
+                          .animate()
+                          .fadeIn(duration: 450.ms, delay: 450.ms)
+                          .scaleX(begin: 0.2, end: 1, duration: 450.ms),
                       const SizedBox(height: 26),
                     ],
                   ),
@@ -215,7 +283,13 @@ class _LoginScreenState extends State<LoginScreen> {
                       color: Colors.white.withOpacity(0.95),
                       borderRadius: BorderRadius.circular(24),
                       border: Border.all(color: const Color(0xFFE6EAF3)),
-                      boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 28, offset: const Offset(0, 14))],
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.08),
+                          blurRadius: 28,
+                          offset: const Offset(0, 14),
+                        ),
+                      ],
                     ),
                     child: Form(
                       key: _formKey,
@@ -223,9 +297,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         children: [
                           _RoleSelector(
                             selected: _role,
-                            onChanged: (r) {
-                              setState(() => _role = r);
-                            },
+                            onChanged: (r) => setState(() => _role = r),
                           ),
                           const SizedBox(height: 14),
                           _FieldWrapper(
@@ -260,10 +332,13 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                           const SizedBox(height: 18),
                           SizedBox(
-                            width: double.infinity, height: 54,
+                            width: double.infinity,
+                            height: 54,
                             child: ElevatedButton(
                               style: ElevatedButton.styleFrom(
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
                                 backgroundColor: blue.withOpacity(0.12),
                                 foregroundColor: blue,
                                 elevation: 0,
@@ -271,7 +346,11 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               onPressed: _isSubmitting ? null : _continue,
                               child: _isSubmitting
-                                  ? const SizedBox(height: 22, width: 22, child: CircularProgressIndicator(strokeWidth: 2))
+                                  ? const SizedBox(
+                                height: 22,
+                                width: 22,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
                                   : const Text('Continue'),
                             ),
                           ),
@@ -335,7 +414,13 @@ class _RoleSelector extends StatelessWidget {
           children: [
             Icon(icon, size: 18, color: isSelected ? scheme.primary : Colors.black87),
             const SizedBox(width: 8),
-            Text(label, style: TextStyle(fontWeight: FontWeight.w600, color: isSelected ? scheme.primary : Colors.black87)),
+            Text(
+              label,
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                color: isSelected ? scheme.primary : Colors.black87,
+              ),
+            ),
           ],
         ),
       ),
@@ -356,7 +441,13 @@ class _FieldWrapper extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: const Color(0xFFE6EAF3)),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 18, offset: const Offset(0, 8))],
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          )
+        ],
       ),
       child: child,
     );
