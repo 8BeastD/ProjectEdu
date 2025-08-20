@@ -1,29 +1,29 @@
 import 'package:flutter/material.dart';
-import '../widgets/edu_nav_shell.dart';
+import 'package:projectedu/features/projects/widgets/edu_nav_shell.dart';
 import 'profile_screen.dart';
 
-class StudentHome extends StatelessWidget {
-  const StudentHome({super.key});
+class TeacherHome extends StatelessWidget {
+  const TeacherHome({super.key});
 
   @override
   Widget build(BuildContext context) {
     return EduNavShell(
-      role: 'Student',
+      role: 'Supervisor',
       pages: const [
-        _Stub(title: 'Home • Student'),
-        _Stub(title: 'Emergency • Student'),
-        _Stub(title: 'Notifications • Student'),
+        _Stub(title: 'Home • Supervisor'),
+        _Stub(title: 'Emergency • Supervisor'),
+        _Stub(title: 'Notifications • Supervisor'),
         ProfileScreen(), // ✅ real profile
       ],
       labels: const ['Home', 'Emergency', 'Notification', 'Profile'],
       icons: const [
         Icons.home_rounded,
-        Icons.emergency_share_outlined,
+        Icons.emergency_outlined,
         Icons.notifications_none_rounded,
         Icons.person_outline_rounded,
       ],
       onFab: () {
-        // Student create action
+        // Teacher create action
       },
     );
   }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import '../widgets/edu_nav_shell.dart';
+
+import 'package:projectedu/features/projects/widgets/edu_nav_shell.dart';
 import 'profile_screen.dart';
 
 class AdminHome extends StatelessWidget {

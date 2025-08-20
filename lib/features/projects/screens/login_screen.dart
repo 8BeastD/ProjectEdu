@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../../supabase_config.dart';
+import 'package:projectedu/supabase_config.dart';
 
 // store session locally (email + role) for Profile screen & auto-login UX
-import '../../utils/session_store.dart';
+import 'package:projectedu/utils/session_store.dart';
 
 // ✅ Use aliases so we always reference the right class names:
 import 'student_home.dart' as student;
