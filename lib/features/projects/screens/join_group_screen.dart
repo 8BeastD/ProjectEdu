@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import '../repo/supabase_projects_repo.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:projectedu/utils/session_store.dart';
 
 class JoinGroupScreen extends StatefulWidget {
   const JoinGroupScreen({super.key});
@@ -9,39 +10,81 @@ class JoinGroupScreen extends StatefulWidget {
 }
 
 class _JoinGroupScreenState extends State<JoinGroupScreen> {
-  List<Map<String, dynamic>> _projects = [];
-  String? _projectId;
-  List<Map<String, dynamic>> _groups = [];
-  String? _groupId;
+  final _codeC = TextEditingController();
   bool _loading = false;
+  String? _studentEmail;
 
   @override
   void initState() {
     super.initState();
-    _loadProjects();
+    _loadCurrentStudent();
   }
 
-  Future<void> _loadProjects() async {
-    final list = await ProjectsRepo.instance.listProjects();
-    setState(() => _projects = list);
+  Future<void> _loadCurrentStudent() async {
+    // use your lightweight session store
+    final cur = await SessionStore.current();
+    setState(() => _studentEmail = (cur.email.isNotEmpty ? cur.email : null));
   }
 
-  Future<void> _loadGroups() async {
-    if (_projectId == null) return;
-    final res = await ProjectsRepo.instance.listGroupsByProject(_projectId!);
-    setState(() => _groups = res);
+  @override
+  void dispose() {
+    _codeC.dispose();
+    super.dispose();
   }
 
-  Future<void> _requestJoin() async {
-    if (_groupId == null) return;
+  Future<void> _join() async {
+    final code = _codeC.text.trim();
+    if (code.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter the group code')),
+      );
+      return;
+    }
+    if (_studentEmail == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please log in as a student first.')),
+      );
+      return;
+    }
+
     setState(() => _loading = true);
     try {
-      await ProjectsRepo.instance.requestJoin(_groupId!);
+      final client = Supabase.instance.client;
+
+      final res = await client.rpc('join_group_with_code', params: {
+        'p_code': code,
+        'p_student_email': _studentEmail!,
+      });
+
+      if (res is! List || res.isEmpty) {
+        throw 'RPC returned empty';
+      }
+
+      final row = (res.first as Map<String, dynamic>);
+      final groupNo = row['group_no'];
+
+      if (!mounted) return;
+      await showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Joined Group'),
+          content: Text('Success! You are now in Group #$groupNo.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+
+      if (!mounted) return;
+      Navigator.of(context).pop(true); // go back to previous screen
+    } on PostgrestException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Join request sent')),
+        SnackBar(content: Text(e.message)),
       );
-      Navigator.pop(context);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -54,46 +97,58 @@ class _JoinGroupScreenState extends State<JoinGroupScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final canJoin = !_loading && (_studentEmail != null);
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Request to Join Group')),
-      body: Padding(
+      appBar: AppBar(title: const Text('Join Group by Code')),
+      body: ListView(
         padding: const EdgeInsets.all(16),
-        child: ListView(
-          children: [
-            DropdownButtonFormField<String>(
-              value: _projectId,
-              decoration: const InputDecoration(labelText: 'Project'),
-              items: _projects.map((p) => DropdownMenuItem(
-                value: p['id'] as String,
-                child: Text((p['name'] ?? 'Untitled Project') as String),
-              )).toList(),
-              onChanged: (v) async {
-                setState(() {
-                  _projectId = v;
-                  _groups = [];
-                  _groupId = null;
-                });
-                await _loadGroups();
-              },
+        children: [
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFE6EAF3)),
             ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              value: _groupId,
-              decoration: const InputDecoration(labelText: 'Group'),
-              items: _groups.map((g) => DropdownMenuItem(
-                value: g['id'] as String,
-                child: Text((g['name'] ?? 'Group') as String),
-              )).toList(),
-              onChanged: (v) => setState(() => _groupId = v),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Enter the code shared by the group leader.',
+                    style: TextStyle(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _codeC,
+                  textCapitalization: TextCapitalization.characters,
+                  decoration: const InputDecoration(
+                    labelText: 'Group Code',
+                    hintText: 'e.g., 4F2A9C',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  _studentEmail == null
+                      ? 'Not signed in.'
+                      : 'You are signing in as: $_studentEmail',
+                  style: const TextStyle(color: Colors.black54),
+                ),
+              ],
             ),
-            const SizedBox(height: 24),
-            ElevatedButton.icon(
-              onPressed: _loading ? null : _requestJoin,
-              icon: const Icon(Icons.person_add_alt_1_outlined),
-              label: Text(_loading ? 'Sending...' : 'Send Request'),
+          ),
+          const SizedBox(height: 20),
+          SizedBox(
+            height: 52,
+            child: ElevatedButton.icon(
+              onPressed: canJoin ? _join : null,
+              icon: _loading
+                  ? const SizedBox(
+                  width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.login),
+              label: Text(_loading ? 'Joining…' : 'Join Group'),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

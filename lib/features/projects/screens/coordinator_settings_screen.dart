@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import '../repo/supabase_projects_repo.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:intl/intl.dart';
 
 class CoordinatorSettingsScreen extends StatefulWidget {
   const CoordinatorSettingsScreen({super.key});
@@ -9,119 +10,280 @@ class CoordinatorSettingsScreen extends StatefulWidget {
 }
 
 class _CoordinatorSettingsScreenState extends State<CoordinatorSettingsScreen> {
-  List<Map<String, dynamic>> _projects = [];
-  String? _projectId;
-  int _maxGroupSize = 4;
-  int _maxTeachers = 1;
-  bool _allowCross = true;
-  final _proposalController = TextEditingController();
-  final _finalController = TextEditingController();
-  bool _busy = false;
+  final _client = Supabase.instance.client;
 
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
+  final _titleC = TextEditingController(text: 'Minor Project – Cycle 1');
+  final _deptC = TextEditingController(text: 'CSE');
+
+  DateTime _start = DateTime.now().add(const Duration(minutes: 5));
+  DateTime _end = DateTime.now().add(const Duration(days: 7));
+  int _min = 2;
+  int _max = 4;
+  bool _saving = false;
 
   @override
   void dispose() {
-    _proposalController.dispose();
-    _finalController.dispose();
+    _titleC.dispose();
+    _deptC.dispose();
     super.dispose();
   }
 
-  Future<void> _load() async {
-    final list = await ProjectsRepo.instance.listProjects();
-    setState(() => _projects = list);
+  Future<void> _pick(bool pickStart) async {
+    final base = pickStart ? _start : _end;
+
+    final pickedDate = await showDatePicker(
+      context: context,
+      firstDate: DateTime.now().subtract(const Duration(days: 1)),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      initialDate: base,
+    );
+    if (pickedDate == null) return;
+
+    final pickedTime = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(base),
+    );
+    if (pickedTime == null) return;
+
+    final dt = DateTime(
+      pickedDate.year,
+      pickedDate.month,
+      pickedDate.day,
+      pickedTime.hour,
+      pickedTime.minute,
+    );
+
+    setState(() {
+      if (pickStart) {
+        _start = dt;
+      } else {
+        _end = dt;
+      }
+    });
   }
 
   Future<void> _save() async {
-    if (_projectId == null) return;
-    setState(() => _busy = true);
-    try {
-      await ProjectsRepo.instance.upsertProjectSettings(
-        projectId: _projectId!,
-        maxGroupSize: _maxGroupSize,
-        maxTeachersPerGroup: _maxTeachers,
-        allowCrossGroupRequests: _allowCross,
-        deadlines: {
-          'proposal_due': _proposalController.text.trim(),
-          'final_due': _finalController.text.trim(),
-        },
+    if (_saving) return;
+
+    if (_min < 1 || _max < _min) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Check group size: Min must be ≥ 1 and ≤ Max.')),
       );
+      return;
+    }
+    if (_end.isBefore(_start)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('End time must be after start time.')),
+      );
+      return;
+    }
+
+    setState(() => _saving = true);
+    try {
+      final email = _client.auth.currentUser?.email ?? 'coordinator@kiit.ac.in';
+
+      final inserting = {
+        'title': _titleC.text.trim(),
+        'start_at': _start.toUtc().toIso8601String(),
+        'end_at': _end.toUtc().toIso8601String(),
+        'min_group_size': _min,
+        'max_group_size': _max,
+        'department': _deptC.text.trim().isEmpty ? null : _deptC.text.trim(),
+        'created_by': email,
+        'status': 'active',
+      };
+
+      final row = await _client
+          .from('project_cycles')
+          .insert(inserting)
+          .select('id,title')
+          .single();
+
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Settings saved')));
-      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Cycle created: ${row['title']}')),
+      );
+      // Return the new cycle id to previous screen (optional)
+      Navigator.pop(context, row['id']);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to create cycle: $e')),
+      );
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) setState(() => _saving = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final df = DateFormat('dd MMM yyyy, HH:mm');
+    const blue = Color(0xFF2563EB);
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Coordinator • Project Settings')),
-      body: Padding(
+      appBar: AppBar(
+        title: const Text('Project Cycle Settings', style: TextStyle(fontWeight: FontWeight.w800)),
+        centerTitle: false,
+      ),
+      body: ListView(
         padding: const EdgeInsets.all(16),
-        child: ListView(
-          children: [
-            DropdownButtonFormField<String>(
-              value: _projectId,
-              decoration: const InputDecoration(labelText: 'Project'),
-              items: _projects.map((p) => DropdownMenuItem(
-                value: p['id'] as String,
-                child: Text(p['name'] as String),
-              )).toList(),
-              onChanged: (v) => setState(() => _projectId = v),
+        children: [
+          TextField(
+            controller: _titleC,
+            decoration: const InputDecoration(
+              labelText: 'Cycle Title',
+              border: OutlineInputBorder(),
             ),
-            const SizedBox(height: 12),
-            Row(children: [
-              Expanded(child: _numField('Max group size', _maxGroupSize, (v) => setState(() => _maxGroupSize = v))),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _deptC,
+            decoration: const InputDecoration(
+              labelText: 'Department (optional, e.g. CSE)',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // Start / End pickers
+          Row(
+            children: [
+              Expanded(
+                child: _PickTile(
+                  label: 'Start',
+                  value: df.format(_start),
+                  onTap: () => _pick(true),
+                ),
+              ),
               const SizedBox(width: 12),
-              Expanded(child: _numField('Max teachers/group', _maxTeachers, (v) => setState(() => _maxTeachers = v))),
-            ]),
-            const SizedBox(height: 12),
-            SwitchListTile(
-              value: _allowCross,
-              onChanged: (v) => setState(() => _allowCross = v),
-              title: const Text('Allow cross‑group join requests'),
-            ),
-            const Divider(height: 28),
-            TextField(
-              controller: _proposalController,
-              decoration: const InputDecoration(
-                labelText: 'Proposal due (YYYY‑MM‑DD)',
+              Expanded(
+                child: _PickTile(
+                  label: 'End',
+                  value: df.format(_end),
+                  onTap: () => _pick(false),
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _finalController,
-              decoration: const InputDecoration(
-                labelText: 'Final submission due (YYYY‑MM‑DD)',
+            ],
+          ),
+
+          const SizedBox(height: 12),
+
+          // Min / Max
+          Row(
+            children: [
+              Expanded(
+                child: _NumField(
+                  label: 'Min Group Size',
+                  value: _min,
+                  onChanged: (v) => setState(() => _min = v),
+                ),
               ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _NumField(
+                  label: 'Max Group Size',
+                  value: _max,
+                  onChanged: (v) => setState(() => _max = v),
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 18),
+
+          // Save button
+          ElevatedButton.icon(
+            onPressed: _saving ? null : _save,
+            icon: _saving
+                ? const SizedBox(
+                width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.rocket_launch_outlined),
+            label: Text(_saving ? 'Starting…' : 'Start Cycle & Notify'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: blue,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
-            const SizedBox(height: 24),
-            ElevatedButton.icon(
-              onPressed: _busy ? null : _save,
-              icon: const Icon(Icons.save_alt),
-              label: Text(_busy ? 'Saving...' : 'Save Settings'),
-            ),
+          ),
+
+          const SizedBox(height: 12),
+          const Text(
+            'A notification for teachers is created automatically by a DB trigger.\n'
+                'You can later attach a PDF by setting pdf_url on that notification row.',
+            style: TextStyle(color: Colors.black54),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PickTile extends StatelessWidget {
+  final String label;
+  final String value;
+  final VoidCallback onTap;
+
+  const _PickTile({
+    required this.label,
+    required this.value,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFE6EAF3)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: const TextStyle(color: Colors.black54)),
+            const SizedBox(height: 4),
+            Text(value, style: const TextStyle(fontWeight: FontWeight.w700)),
           ],
         ),
       ),
     );
   }
+}
 
-  Widget _numField(String label, int value, void Function(int) onChanged) {
-    return TextFormField(
-      initialValue: value.toString(),
+class _NumField extends StatelessWidget {
+  final String label;
+  final int value;
+  final ValueChanged<int> onChanged;
+
+  const _NumField({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = TextEditingController(text: value.toString());
+    // Keep cursor at end
+    controller.selection = TextSelection.fromPosition(
+      TextPosition(offset: controller.text.length),
+    );
+
+    return TextField(
+      controller: controller,
       keyboardType: TextInputType.number,
-      decoration: InputDecoration(labelText: label),
-      onChanged: (v) => onChanged(int.tryParse(v) ?? value),
+      decoration: InputDecoration(
+        labelText: label,
+        border: const OutlineInputBorder(),
+      ),
+      onChanged: (s) {
+        final v = int.tryParse(s);
+        if (v != null) onChanged(v);
+      },
     );
   }
 }

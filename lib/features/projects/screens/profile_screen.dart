@@ -12,15 +12,16 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  Map<String, dynamic>? _row;
+  Map<String, dynamic>? _row;           // my directory_people row
   bool _loading = true;
   String _email = '';
   String _role = 'student';
 
-  // Student: members of my group
+  // Student: my group number + members
+  String? _studentGroupNo;
   List<Map<String, dynamic>> _groupMembers = [];
 
-  // Teacher: groups under my department -> members map
+  // Teacher: groups (group_no -> members)
   List<_GroupData> _teacherGroups = [];
 
   @override
@@ -29,12 +30,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _load();
   }
 
+  // --- helper to format PostgREST IN list: '( "a","b","c" )'
+  String _inList(List<String> values) {
+    if (values.isEmpty) return '(NULL)'; // yields empty set
+    final escaped = values
+        .map((v) => '"${v.replaceAll('"', r'\"').replaceAll("'", "''")}"')
+        .join(',');
+    return '($escaped)';
+  }
+
   Future<void> _load() async {
     setState(() => _loading = true);
 
     final saved = await SessionStore.current();
     _email = (saved.email).trim().toLowerCase();
-    _role = saved.role; // 'student' | 'teacher' | 'admin'
+    _role  = saved.role; // 'student' | 'teacher' | 'admin'
 
     if (_email.isEmpty) {
       setState(() => _loading = false);
@@ -45,47 +55,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
     try {
       final client = SupabaseInit.client;
 
+      // 1) My profile (directory_people)
       final r = await client
           .from('directory_people')
           .select(
-          'email, full_name, university_id, role, phone, department, hostel, group_no, avatar_url')
+          'email, full_name, university_id, role, phone, department, hostel, avatar_url')
           .eq('email', _email)
           .maybeSingle();
 
       _row = r;
 
-      // Load group data based on role
+      // 2) Role specific data
       if (r != null && r['role'] == 'student') {
-        final grp = r['group_no'];
-        if (grp != null) {
-          final members = await client
-              .from('directory_people')
-              .select('email, full_name, phone, group_no, avatar_url')
-              .eq('group_no', grp);
-          _groupMembers = List<Map<String, dynamic>>.from(members);
-        } else {
-          _groupMembers = [];
-        }
+        await _loadStudentGroupData(client);
       } else if (r != null && r['role'] == 'teacher') {
-        final dept = r['department'];
-        // Fetch everyone in my department having a non-null group_no
-        final all = await client
-            .from('directory_people')
-            .select('email, full_name, phone, group_no, avatar_url')
-            .eq('department', dept)
-            .not('group_no', 'is', null);
-
-        final list = List<Map<String, dynamic>>.from(all);
-        final Map<String, List<Map<String, dynamic>>> grouped = {};
-        for (final m in list) {
-          final g = (m['group_no'] ?? '').toString();
-          if (g.isEmpty) continue;
-          grouped.putIfAbsent(g, () => []).add(m);
-        }
-        _teacherGroups = grouped.entries
-            .map((e) => _GroupData(groupNo: e.key, members: e.value))
-            .toList()
-          ..sort((a, b) => a.groupNo.compareTo(b.groupNo));
+        await _loadTeacherGroupsData(client, r['department']?.toString());
+      } else {
+        // admin: nothing extra
+        _teacherGroups = [];
+        _groupMembers = [];
+        _studentGroupNo = null;
       }
 
       setState(() => _loading = false);
@@ -94,6 +83,129 @@ class _ProfileScreenState extends State<ProfileScreen> {
       setState(() => _loading = false);
       _toast('Failed to load profile: $e', true);
     }
+  }
+
+  /// Find the student’s latest group (if any) and load its members.
+  Future<void> _loadStudentGroupData(SupabaseClient client) async {
+    // find one membership for me (latest wins)
+    final membership = await client
+        .from('project_group_members')
+        .select('group_id, cycle_id, added_at')
+        .eq('member_email', _email)
+        .order('added_at', ascending: false)
+        .limit(1)
+        .maybeSingle();
+
+    if (membership == null) {
+      _studentGroupNo = null;
+      _groupMembers = [];
+      return;
+    }
+
+    final groupId = membership['group_id'] as String;
+
+    // group_no
+    final grp = await client
+        .from('project_groups')
+        .select('group_no')
+        .eq('id', groupId)
+        .maybeSingle();
+
+    _studentGroupNo = grp?['group_no']?.toString();
+
+    // emails of members
+    final memberRows = await client
+        .from('project_group_members')
+        .select('member_email')
+        .eq('group_id', groupId);
+
+    final emails = (memberRows as List)
+        .map((m) => (m as Map<String, dynamic>)['member_email'] as String)
+        .toList();
+
+    if (emails.isEmpty) {
+      _groupMembers = [];
+      return;
+    }
+
+    // hydrate from directory_people (name, roll, avatar, email)
+    final people = await client
+        .from('directory_people')
+        .select('email, full_name, university_id, avatar_url')
+    // REPLACED in_ -> filter('in', '(...)')
+        .filter('email', 'in', _inList(emails));
+
+    _groupMembers = List<Map<String, dynamic>>.from(people);
+  }
+
+  /// For a teacher, gather all groups in this department with their members.
+  Future<void> _loadTeacherGroupsData(
+      SupabaseClient client, String? dept) async {
+    _teacherGroups = [];
+    if (dept == null || dept.trim().isEmpty) return;
+
+    // 1) all students for this department (email -> profile)
+    final students = await client
+        .from('directory_people')
+        .select('email, full_name, university_id, avatar_url')
+        .eq('role', 'student')
+        .eq('department', dept);
+
+    final list = List<Map<String, dynamic>>.from(students);
+    final emailToProfile = {
+      for (final m in list) (m['email'] as String): m,
+    };
+
+    final deptEmails = emailToProfile.keys.toList();
+    if (deptEmails.isEmpty) return;
+
+    // 2) their memberships (group_id -> emails)
+    final memberships = await client
+        .from('project_group_members')
+        .select('group_id, member_email')
+    // REPLACED in_ -> filter('in', '(...)')
+        .filter('member_email', 'in', _inList(deptEmails));
+
+    final Map<String, List<String>> byGroup = {};
+    for (final row in (memberships as List)) {
+      final m = row as Map<String, dynamic>;
+      final gid = m['group_id'] as String;
+      final em  = m['member_email'] as String;
+      byGroup.putIfAbsent(gid, () => []).add(em);
+    }
+    if (byGroup.isEmpty) return;
+
+    // 3) fetch group_no for those group_ids
+    final groupIds = byGroup.keys.toList();
+    final grpRows = await client
+        .from('project_groups')
+        .select('id, group_no')
+    // REPLACED in_ -> filter('in', '(...)')
+        .filter('id', 'in', _inList(groupIds));
+
+    final idToNo = <String, String>{
+      for (final g in (grpRows as List))
+        (g as Map<String, dynamic>)['id'] as String:
+        (g['group_no']).toString(),
+    };
+
+    // 4) build view model
+    final result = <_GroupData>[];
+    byGroup.forEach((gid, ems) {
+      final members = <Map<String, dynamic>>[];
+      for (final e in ems) {
+        final p = emailToProfile[e];
+        if (p != null) members.add(p);
+      }
+      if (members.isNotEmpty) {
+        result.add(
+          _GroupData(groupNo: idToNo[gid] ?? '—', members: members),
+        );
+      }
+    });
+
+    result.sort((a, b) => a.groupNo.compareTo(b.groupNo));
+    _teacherGroups = result;
   }
 
   Future<void> _signOut() async {
@@ -119,8 +231,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     const brandLight = Color(0xFF3B82F6);
 
     final hasGroupTab = _row != null && _row!['role'] != 'admin';
-    final groupTabLabel =
-    _row?['role'] == 'teacher' ? 'My Groups' : 'My Group';
 
     if (_loading) {
       return const Scaffold(
@@ -146,9 +256,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
       );
     }
 
-    // With/without tab layout
+    // Admin → single pane
     if (!hasGroupTab) {
-      // Admin (Coordinator) → Only My Profile
       return Scaffold(
         backgroundColor: const Color(0xFFF7F9FC),
         appBar: _buildAppBar(),
@@ -162,7 +271,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       );
     }
 
-    // Student/Teacher → Tabs (My Profile / My Group[s])
+    // Student/Teacher → tabs
     return Scaffold(
       backgroundColor: const Color(0xFFF7F9FC),
       appBar: _buildAppBar(),
@@ -186,16 +295,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   )
                 ],
               ),
-              child: TabBar(
+              child: const TabBar(
                 indicatorColor: brand,
                 labelColor: brand,
                 unselectedLabelColor: Colors.black87,
                 indicatorWeight: 2.5,
-                labelStyle: const TextStyle(
-                    fontWeight: FontWeight.w700, letterSpacing: .2),
+                labelStyle:
+                TextStyle(fontWeight: FontWeight.w700, letterSpacing: .2),
                 tabs: [
-                  const Tab(text: 'My Profile'),
-                  Tab(text: groupTabLabel),
+                  Tab(text: 'My Profile'),
+                  Tab(text: 'My Group(s)'),
                 ],
               ),
             ),
@@ -301,10 +410,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
         ],
       ),
-    )
-        .animate()
-        .fadeIn(duration: 280.ms)
-        .moveY(begin: 10, end: 0);
+    ).animate().fadeIn(duration: 280.ms).moveY(begin: 10, end: 0);
   }
 
   // ============ TAB: My Profile ============
@@ -372,8 +478,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 fontWeight: FontWeight.w700,
                 fontSize: 16,
               ),
-              padding:
-              const EdgeInsets.symmetric(vertical: 14, horizontal: 18),
+              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 18),
               backgroundColor: Colors.red.shade50,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(14),
@@ -387,7 +492,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   // ============ TAB: My Group (Student) ============
   Widget _buildStudentGroup() {
-    if ((_row?['group_no']) == null) {
+    if (_studentGroupNo == null) {
       return _groupEmptyCard(
         title: 'My Group',
         subtitle:
@@ -398,7 +503,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
       children: [
         _GroupMembersCard(
-          title: 'Group Members',
+          title: 'Group #$_studentGroupNo',
           members: _groupMembers,
           onTapMember: (m) => _showMemberDialog(m),
         ),
@@ -457,16 +562,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   void _showMemberDialog(Map<String, dynamic> m) {
-    final name = (m['full_name'] ?? '').toString();
-    final phone = (m['phone'] ?? 'N/A').toString();
-    final grp = (m['group_no'] ?? 'N/A').toString();
+    final name  = (m['full_name'] ?? '').toString();
+    final email = (m['email'] ?? 'N/A').toString();
+    final roll  = (m['university_id'] ?? 'N/A').toString();
     final avatarUrl = m['avatar_url'];
 
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        shape:
-        RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
         contentPadding:
         const EdgeInsets.only(left: 22, right: 22, top: 22, bottom: 8),
         content: Column(
@@ -474,8 +578,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           children: [
             CircleAvatar(
               radius: 40,
-              backgroundImage:
-              (avatarUrl != null && avatarUrl.toString().isNotEmpty)
+              backgroundImage: (avatarUrl != null && avatarUrl.toString().isNotEmpty)
                   ? NetworkImage(avatarUrl)
                   : null,
               child: (avatarUrl == null || avatarUrl.toString().isEmpty)
@@ -487,9 +590,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
             const SizedBox(height: 12),
             _kvLine('Name', name, bold: true),
             const SizedBox(height: 10),
-            _kvLine('Grp', grp),
+            _kvLine('Roll No.', roll),
             const SizedBox(height: 10),
-            _kvLine('Contact Number', phone),
+            _kvLine('Email', email),
             const SizedBox(height: 6),
           ],
         ),
@@ -531,8 +634,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ),
                 Text(
                   'Group ${g.groupNo}',
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w800, fontSize: 18),
+                  style:
+                  const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
                 ),
                 const SizedBox(height: 4),
                 Text('${g.members.length} members',
@@ -725,8 +828,7 @@ class _AvatarGrid extends StatelessWidget {
             children: [
               CircleAvatar(
                 radius: 32,
-                backgroundImage:
-                (avatarUrl != null && avatarUrl.toString().isNotEmpty)
+                backgroundImage: (avatarUrl != null && avatarUrl.toString().isNotEmpty)
                     ? NetworkImage(avatarUrl)
                     : null,
                 child: (avatarUrl == null || avatarUrl.toString().isEmpty)
@@ -738,8 +840,8 @@ class _AvatarGrid extends StatelessWidget {
                 name.split(' ').first.toUpperCase(),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                    fontSize: 12, fontWeight: FontWeight.w700),
+                style:
+                const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
               ),
             ],
           ),
@@ -812,11 +914,11 @@ class _TeacherGroupTile extends StatelessWidget {
               color: const Color(0xFFEFF3FF),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Icon(Icons.groups_2_rounded, color: Color(0xFF2563EB)),
+            child:
+            const Icon(Icons.groups_2_rounded, color: Color(0xFF2563EB)),
           ),
           title: Text('Group $groupNo',
-              style:
-              const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
           subtitle: Text('$count members'),
           trailing: const Icon(Icons.chevron_right_rounded),
           onTap: onOpen,
