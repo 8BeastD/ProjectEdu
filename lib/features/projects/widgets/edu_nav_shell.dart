@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 
+// ADDED: direct screen imports for safe fallback navigation
+import '../screens/coordinator_assign_supervisors_screen.dart';
+import '../screens/coordinator_settings_screen.dart';
+
 /// ===============================================================
 /// Premium Bottom Navigation Shell + Role Sheets (Richer Version)
-/// - EduNavShell (unchanged API)
-/// - StudentActionsSheet / TeacherActionsSheet / CoordinatorActionsSheet
-/// - Premium styling: glass cards, gradients, subtle motion
-/// - Ready to wire: uses Navigator.pushNamed for routes (see comments)
 /// ===============================================================
 
 class EduNavShell extends StatefulWidget {
@@ -98,7 +98,6 @@ class _EduNavShellState extends State<EduNavShell> {
         child: Stack(
           alignment: Alignment.center,
           children: [
-            // soft glow
             Container(
               height: 64,
               width: 64,
@@ -114,7 +113,6 @@ class _EduNavShellState extends State<EduNavShell> {
               ),
             ),
             FloatingActionButton(
-              // Always open our role sheet; call onFab AFTER (if provided)
               onPressed: () {
                 try {
                   _openRoleSheet();
@@ -394,7 +392,8 @@ class TeacherActionsSheet extends StatelessWidget {
                 _QuickTileData(
                   icon: Icons.article_outlined,
                   label: 'Proposals',
-                  onTap: () => _safeRoute(context, '/projects/review-proposals'),
+                  onTap: () =>
+                      _safeRoute(context, '/projects/review-proposals'),
                 ),
               ],
             ),
@@ -406,7 +405,8 @@ class TeacherActionsSheet extends StatelessWidget {
                   icon: Icons.insights_outlined,
                   title: 'Overview',
                   subtitle: 'Pending, approved, deadlines at a glance',
-                  onTap: () => _safeRoute(context, '/projects/teacher-overview'),
+                  onTap: () =>
+                      _safeRoute(context, '/projects/teacher-overview'),
                 ),
                 _ActionItem(
                   icon: Icons.event_note_outlined,
@@ -488,7 +488,6 @@ class CoordinatorActionsSheet extends StatelessWidget {
   }
 }
 
-/// A tiny fallback if role is not one of the expected strings.
 class _RoleNotRecognizedSheet extends StatelessWidget {
   const _RoleNotRecognizedSheet();
 
@@ -526,10 +525,8 @@ class _FrostedContainer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Decorative blurred gradient background
     return Stack(
       children: [
-        // gradient backdrop
         Positioned.fill(
           child: IgnorePointer(
             child: DecoratedBox(
@@ -547,7 +544,6 @@ class _FrostedContainer extends StatelessWidget {
             ),
           ),
         ),
-        // card sheet
         Container(
           decoration: BoxDecoration(
             color: Colors.white.withOpacity(0.94),
@@ -815,22 +811,32 @@ class _ActionItem extends StatelessWidget {
 /// Pushes a named route safely:
 /// - Closes the bottom sheet if open
 /// - Pushes on the root navigator next frame
-/// - Shows a snackbar if the route is not registered
+/// - **Falls back** to direct push for known pages (no “Route not found”)
 void _safeRoute(BuildContext context, String routeName) {
-  // Close the sheet (if we are in one)
+  // Close the sheet, if we're inside one
   Navigator.of(context).maybePop();
 
-  // Push in the next frame on the root navigator
   WidgetsBinding.instance.addPostFrameCallback((_) {
-    try {
-      Navigator.of(context, rootNavigator: true).pushNamed(routeName);
-    } catch (e) {
-      final m = ScaffoldMessenger.maybeOf(context);
-      m?.showSnackBar(
-        SnackBar(
-          content: Text('Route "$routeName" not found. Wire it in your router.'),
+    // Local registry for pages we want to guarantee work even if not wired in routes:
+    final Map<String, WidgetBuilder> fallback = {
+      '/projects/assign-teachers': (_) =>
+      const CoordinatorAssignSupervisorsScreen(),
+      '/projects/settings': (_) => const CoordinatorSettingsScreen(),
+      '/projects/deadlines': (_) => const CoordinatorSettingsScreen(), // reuse until you add a dedicated screen
+    };
+
+    final builder = fallback[routeName];
+    if (builder != null) {
+      Navigator.of(context, rootNavigator: true).push(
+        MaterialPageRoute(
+          builder: builder,
+          settings: RouteSettings(name: routeName),
         ),
       );
+      return;
     }
+
+    // Otherwise use named route (assumes it's wired in MaterialApp/GoRouter)
+    Navigator.of(context, rootNavigator: true).pushNamed(routeName);
   });
 }

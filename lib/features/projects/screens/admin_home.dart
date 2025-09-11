@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
-
 import 'package:projectedu/features/projects/widgets/edu_nav_shell.dart';
+
 import 'profile_screen.dart';
+import 'coordinator_dashboard_screen.dart'; // <— new dashboard below
 
 class AdminHome extends StatelessWidget {
   const AdminHome({super.key});
@@ -11,10 +12,10 @@ class AdminHome extends StatelessWidget {
     return EduNavShell(
       role: 'Coordinator',
       pages: const [
-        _Stub(title: 'Home • Coordinator'),
-        _Stub(title: 'Emergency • Coordinator'),
-        _Stub(title: 'Notifications • Coordinator'),
-        ProfileScreen(), // ✅ real profile
+        CoordinatorDashboardScreen(),                 // <-- real Home
+        _Stub(title: 'Emergency • Coordinator'),      // keep your stub (can swap later)
+        _Stub(title: 'Notifications • Coordinator'),  // use your real notif page if you have it
+        ProfileScreen(),                               // real profile
       ],
       labels: const ['Home', 'Emergency', 'Notification', 'Profile'],
       icons: const [
@@ -23,9 +24,6 @@ class AdminHome extends StatelessWidget {
         Icons.notifications_none_rounded,
         Icons.person_outline_rounded,
       ],
-      onFab: () {
-        // Coordinator create action (e.g., global announcement)
-      },
     );
   }
 }

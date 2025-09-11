@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:projectedu/features/projects/widgets/edu_nav_shell.dart';
 import 'profile_screen.dart';
+import '../screens/teacher_requests_screen.dart';
+import '../screens/user_notifications_page.dart';
 
 class TeacherHome extends StatelessWidget {
   const TeacherHome({super.key});
@@ -10,10 +12,10 @@ class TeacherHome extends StatelessWidget {
     return EduNavShell(
       role: 'Supervisor',
       pages: const [
-        _Stub(title: 'Home • Supervisor'),
+        TeacherRequestsScreen(),            // dashboard/inbox
         _Stub(title: 'Emergency • Supervisor'),
-        _Stub(title: 'Notifications • Supervisor'),
-        ProfileScreen(), // ✅ real profile
+        UserNotificationsPage(),
+        ProfileScreen(),
       ],
       labels: const ['Home', 'Emergency', 'Notification', 'Profile'],
       icons: const [
@@ -22,9 +24,7 @@ class TeacherHome extends StatelessWidget {
         Icons.notifications_none_rounded,
         Icons.person_outline_rounded,
       ],
-      onFab: () {
-        // Teacher create action
-      },
+      onFab: () {},
     );
   }
 }
@@ -32,17 +32,7 @@ class TeacherHome extends StatelessWidget {
 class _Stub extends StatelessWidget {
   final String title;
   const _Stub({required this.title});
-
   @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Text(
-        title,
-        style: Theme.of(context)
-            .textTheme
-            .titleLarge
-            ?.copyWith(fontWeight: FontWeight.w700),
-      ),
-    );
-  }
+  Widget build(BuildContext context) =>
+      Center(child: Text(title, style: Theme.of(context).textTheme.titleLarge));
 }
